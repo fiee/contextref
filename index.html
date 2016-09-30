@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html  lang="en">
+    <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="webix/codebase/webix.css" type="text/css"> 
+    <link rel="stylesheet" href="webix/codebase/skins/compact.css" type="text/css"> 
+    <script src="webix/codebase/webix.js" type="text/javascript"></script>
+    <style>
+	.cmd-name {
+		font-weight: bold;
+		color: #003300;
+	}
+	.optional {
+		opacity: .75;
+	}
+	.true {
+		color: green;
+	}
+	.false {
+		color: red;
+	}
+    </style>
+    </head>
+    <body>
+        <script type="text/javascript" charset="utf-8">
+	var allcommands = {}; // list of commands
+	var allarguments = {}; // list of common arguments
+	
+	function load_interface(filename, callback=interface_file_handler) {
+	/*
+	Send an XMLHttpRequest for a local interface file like
+	'interface/mkiv/i-'+filename+'.xml'
+	and call the handler on load
+	*/
+		// console.debug('load interface "' + filename + '" with callback:', callback);
+		var client = new XMLHttpRequest();
+		client.onload = check_response;
+		client.FormData = { filename: filename, callback: callback };
+		client.open("GET", 'interface/mkiv/i-'+filename+'.xml');
+		client.send();
+	}
+
+	function check_response(event) {
+	/*
+	Check the response of a XMLHttpRequest
+	and call the callback on success
+	*/
+		// console.debug('check response: (event)', event);
+		if (this.status == 200 && this.response != null) {
+			if (this.FormData) {
+				// console.debug('FormData', this.FormData);
+				callback = this.FormData.callback;
+			} else {
+				console.error('callback not defined in request.FormData');
+				console.log('request', this);
+			}
+			var xml = ( new DOMParser() ).parseFromString( this.response , "application/xml" );
+			// console.debug('XML?', xml);
+			callback(xml);
+			return true;
+		} else {
+			// something went wrong
+			console.error(this.status, 'Could not load interface file!');
+			return false;
+		}
+	}
+	
+	function find_attribute(node, name) {
+	/*
+	*/
+		var att = node.attributes.getNamedItem(name);
+		if (att) {
+			return att.value;
+		}
+		return null;
+	}
+
+	function interface_file_handler(xml) {
+	/*
+	Read all commands from one topic interface file
+	*/
+		// console.debug('read commands from', xml);
+		var list = $$("commands.list");
+		list.clearAll();
+		var commands = xml.getElementsByTagName("cd:command");
+		for ( var c in commands ) {
+			var cmd = commands[c];
+			if (cmd.attributes) {
+				var file = cmd.attributes.getNamedItem('file').value;
+				var url = 'interface/mkiv/i-'+file+'.xml';
+				var args = cmd.getElementsByTagName('cd:arguments');
+				if (args.length) {
+					args = args[0].children;
+				}
+				var cmdname = find_attribute(cmd, 'name');
+				if (cmdname == null) {
+					cmdname = cmd.tagName;
+				}
+				var type = cmd.attributes.getNamedItem('type');
+				if (type) {
+					type = type.value;
+					if (type == 'environment') {
+						cmdname = 'start'+cmdname
+					}
+				}
+				var cmdlistdisplayname = cmdname;
+				var variant = find_attribute(cmd, 'variant');
+				if (variant) {
+					cmdlistdisplayname = cmdlistdisplayname + ' ('+ variant +')'
+				} else {
+					variant = 0;
+				}
+				var entry = { cmd: cmd, listdisplayname: cmdlistdisplayname, name: cmdname, args: args, file: file, url: url, type: type, variant: variant };
+				allcommands[cmdname+'.'+variant] = entry;
+				list.add({command: cmdlistdisplayname, commandname: cmdname, variant: variant});
+			}
+		}
+	} // interface_file_handler
+	
+	function interface_list_handler(xml) {
+	/*
+	Read list of command interface files
+	*/
+		// console.debug('read interface files from', xml);
+		var list = $$("files.list");
+		list.clearAll();
+		var files = xml.getElementsByTagName("cd:interfacefile");
+		for ( var c in files ) {
+			var iff = files[c];
+			if (iff.attributes) {
+				var file = find_attribute(iff, 'filename');
+				file = file.replace('.xml', '').replace('i-', '');
+				if (file != 'common-definitions') {
+					list.add({id: c, file: file });
+				}
+			}
+		}
+	} // interface_list_handler
+	
+	function arguments_handler(xml) {
+	/*
+	*/
+		//console.debug('read arguments from', xml);
+		var defs = xml.getElementsByTagName('cd:define');
+		for (var i=0; i < defs.length; i++) {
+			var def = defs[i];
+			var name = find_attribute(def, 'name');
+			var argtext = name;
+			var entry = {id: i, name: name, type: argtext };
+			var keys = def.getElementsByTagName('cd:keywords');
+			if (keys && keys.length > 0) {
+				if (keys.length != 1) {
+					console.warn(name+' has '+keys.length+' keywords! Only first ist handled.');
+				}
+				keys = keys[0];
+				// delimiters, list, optional
+				var delimiters = find_attribute(keys, 'delimiters');
+				switch (delimiters) {
+					case 'braces':
+						argtext = '{ ' + name + ' }';
+						delimiters = delimiters.value;
+						break;
+					case 'parentheses':
+						argtext = '( ' + name + ' )';
+						delimiters = delimiters.value;
+						break;
+					default:
+						argtext = '[ ' + name + ' ]';
+						delimiters = 'brackets';
+				}
+				entry.list = find_attribute(keys, 'list');
+				entry.optional = find_attribute(keys, 'optional');
+				entry.type = argtext;
+				entry.delimiters = delimiters;
+			}
+			// check parameter, constant, assignments
+			/*
+			var assigns = def.getElementsByTagName('cd:assignments');
+			if (assigns && assigns.length > 0) {
+				if (assigns.length != 1) {
+					console.warn(name+' has '+assigns.length+' assignments! Only first ist handled.');
+				}
+				assigns = assigns[0];
+				entry.optional = find_attribute(assigns, 'optional');
+				entry.list = find_attribute(assigns, 'list');
+			}
+			*/
+			//console.log('argument ' + name, entry);
+			allarguments[name] = entry;
+		}
+	}
+	
+	function arguments_file_handler(xml) {
+	/*
+	Read list of arguments files
+	*/
+		// console.debug('read arguments files from', xml);
+		var files = xml.getElementsByTagName('cd:interfacefile');
+		for (var i=0; i < files.length; i++) {
+			var iff = files[i];
+			var file = iff.attributes.getNamedItem('filename').value;
+			file = file.replace('.xml', '').replace('i-', '');
+			load_interface(file, arguments_handler);
+		}
+	}
+	
+	function show_command(cmdname) {
+	/*
+	Get information about `cmdname` from prefetched
+	commands and common arguments lists
+	and display it
+	*/
+		console.log('show command '+cmdname);
+		var table = $$('arguments.table');
+		var area = $$('displayarea');
+		table.clearAll();
+		if (cmdname in allcommands) {
+			var cmd = allcommands[cmdname];
+			//console.log(cmd);
+			var text = '<span class="cmd-name">\\' + cmd.name + '</span>';
+			for (var i=0; i<cmd.args.length; i++) {
+				var arg = cmd.args[i];
+				var cssclass = 'arg-type ';
+				var argtype = arg.tagName.replace('cd:', '');
+				var argname = find_attribute(arg, 'name');
+				if (argname == null) {
+					argname=argtype;
+				}
+				var entry = {index: i+1, type: argtype, name: argname, optional: '?', delimiters: '?', list: '?', file: cmd.file, cmd: cmdname};
+				if (argname in allarguments) {
+					var a = allarguments[argname];
+					entry.optional = Boolean(a.optional);
+					//entry.delimiters = a.delimiters;
+					entry.list = Boolean(a.list);
+					entry.type = a.type;
+					cssclass += argtype;
+				} else {
+					//console.warn(argname+' is not in allarguments');
+					entry.optional = Boolean(find_attribute(arg, 'optional'));
+					entry.list = Boolean(find_attribute(arg, 'list'));
+					entry.type = '[ ' + entry.type + ' ]';
+				}
+				if (entry.optional) { cssclass += ' optional'; }
+				if (entry.list) { cssclass += ' list'; }
+				text += '<span class="' + cssclass + '">' + entry.type + '</span>';
+				table.add(entry);
+			}
+			area.setHTML(text);
+		} else {
+			area.setHTML('Command <strong>\\' + cmdname+ '</strong> is unknown.');
+		}
+	}
+	
+	function format_boolean (value){ 
+            if (value) {
+		return '<span class="true">✔</span>';
+	    } else {
+		return '<span class="false">✗</span>';
+	    }
+   	} 
+	
+	webix.ready(function(){
+		webix.ui({
+			cols: [
+				{
+					view: "list", 
+					id: 'files.list',
+					gravity: 2,
+					template: '#file#',
+					select: true,
+					on: {
+					    onSelectChange: function () {
+					      var filename = $$('files.list').getSelectedItem().file;
+					      load_interface(filename, interface_file_handler);
+					    }
+					  }
+				},
+				{ view: "resizer" },
+				{
+					id: 'commands.list',
+					view: 'list',
+					gravity: 2,
+					template: '#command#',
+					select: true,
+					on: {
+					    onSelectChange: function () {
+					      var selitem = $$('commands.list').getSelectedItem();
+					      show_command(selitem.commandname+'.'+selitem.variant);
+					    }
+					  }
+				},
+				{ view: "resizer" },
+				{ rows: [
+					{
+						id: "arguments.table",
+						view: "datatable",
+						gravity: 4,
+						columns: [
+							{ id: "index",   header:"", width: 30 },
+							{ id: 'type', header: "Argument Type", fillspace: true },
+							//{ id: 'delimiters', header: "Delimiters", width: 70 },
+							{ id: 'list', header: "list?", width: 70, format: format_boolean },
+							{ id: 'optional', header: "optional?", width: 70, format: format_boolean},
+							{ id: 'file', header: 'File', width: 200, template: '<a href="http://source.contextgarden.net/tex/context/base/mkiv/#file#?search=#cmd#">#file#</a>' }
+						]
+					},
+					{ view: "resizer" },
+					{
+						id: "displayarea",
+						view: "template",
+						gravity: 6,
+						template: 'Select a command.'
+					}
+				], gravity: 6 }
+			]
+		});
+		load_interface('common-definitions', arguments_file_handler);
+		load_interface('context', interface_list_handler);
+	});
+        </script>
+    </body>
+</html>
